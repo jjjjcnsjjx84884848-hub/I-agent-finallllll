@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
 from datetime import datetime, timezone
@@ -16,129 +18,278 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 JOBS_PATH = ROOT / "jobs.json"
 STATUS_PATH = ROOT / "scan_status.json"
+FAVORITES_PATH = ROOT / "favorites.json"
+HISTORY_PATH = ROOT / "history.json"
 
 st.set_page_config(
-    page_title="Агент вакансий",
-    page_icon="🧭",
+    page_title="Фриланс-Агент",
+    page_icon="✨",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 
-# Простые типы заданий, которые легче выполнять с помощью ИИ.
+# ---------------------------------------------------------
+# СТИЛИ ИНТЕРФЕЙСА
+# ---------------------------------------------------------
+
+st.markdown(
+    """
+    <style>
+        .block-container {
+            max-width: 1450px;
+            padding-top: 1.4rem;
+            padding-bottom: 4rem;
+        }
+
+        .main-title {
+            font-size: 2.2rem;
+            font-weight: 800;
+            margin-bottom: 0.2rem;
+        }
+
+        .main-subtitle {
+            opacity: 0.78;
+            margin-bottom: 1.4rem;
+        }
+
+        .hero-card {
+            border: 1px solid rgba(128, 128, 128, 0.25);
+            border-radius: 22px;
+            padding: 1.4rem 1.5rem;
+            margin-bottom: 1.2rem;
+            background: rgba(127, 127, 127, 0.06);
+        }
+
+        .job-card {
+            border: 1px solid rgba(128, 128, 128, 0.24);
+            border-radius: 18px;
+            padding: 1rem 1.1rem;
+            margin-bottom: 0.85rem;
+            background: rgba(127, 127, 127, 0.045);
+        }
+
+        .job-title {
+            font-size: 1.05rem;
+            font-weight: 750;
+            margin-bottom: 0.35rem;
+        }
+
+        .job-meta {
+            opacity: 0.72;
+            font-size: 0.88rem;
+            margin-bottom: 0.6rem;
+        }
+
+        .badge {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 0.22rem 0.58rem;
+            margin-right: 0.35rem;
+            margin-bottom: 0.35rem;
+            font-size: 0.78rem;
+            border: 1px solid rgba(128, 128, 128, 0.28);
+        }
+
+        .risk-low {
+            background: rgba(50, 180, 90, 0.13);
+        }
+
+        .risk-medium {
+            background: rgba(230, 170, 40, 0.14);
+        }
+
+        .risk-high {
+            background: rgba(220, 65, 65, 0.14);
+        }
+
+        .simple-task {
+            background: rgba(80, 120, 255, 0.13);
+        }
+
+        .copy-box {
+            border: 1px dashed rgba(128, 128, 128, 0.42);
+            border-radius: 14px;
+            padding: 1rem;
+            white-space: pre-wrap;
+            background: rgba(127, 127, 127, 0.04);
+        }
+
+        div[data-testid="stMetric"] {
+            border: 1px solid rgba(128, 128, 128, 0.20);
+            border-radius: 17px;
+            padding: 0.8rem 1rem;
+            background: rgba(127, 127, 127, 0.04);
+        }
+
+        div[data-testid="stExpander"] {
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .small-muted {
+            opacity: 0.67;
+            font-size: 0.85rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ---------------------------------------------------------
+# КОНСТАНТЫ
+# ---------------------------------------------------------
+
+RISK_LABELS = {
+    "low": "Низкий",
+    "medium": "Средний",
+    "high": "Высокий",
+}
+
+RISK_ICONS = {
+    "low": "🟢",
+    "medium": "🟡",
+    "high": "🔴",
+}
+
+LANGUAGE_LABELS = {
+    "ru": "Русский",
+    "uk": "Украинский",
+    "de": "Немецкий",
+    "en": "Английский",
+    "auto": "Определить автоматически",
+}
+
+TASK_LABELS = {
+    "translation": "Перевод",
+    "transcription": "Транскрибация",
+    "data_entry": "Ввод данных",
+    "proofreading": "Проверка текста",
+    "virtual_assistant": "Виртуальный помощник",
+    "writing": "Работа с текстом",
+    "other": "Другое",
+}
+
 SIMPLE_TASK_KEYWORDS = [
-    # Английский
     "translation",
     "translate",
     "translator",
     "proofreading",
     "proofread",
+    "proofreader",
+    "transcription",
+    "transcribe",
     "data entry",
     "copy paste",
     "copy-paste",
-    "transcription",
-    "transcribe",
-    "subtitle",
-    "subtitles",
     "typing",
     "retyping",
-    "rewrite",
-    "rewriting",
+    "subtitle",
+    "subtitles",
+    "captioning",
     "text editing",
-    "content editing",
-    "product description",
-    "short description",
-    "email writing",
-    "virtual assistant",
-    "web research",
-    "internet research",
-    "simple research",
     "document formatting",
     "pdf to word",
     "image to text",
     "audio to text",
-
-    # Немецкий
+    "web research",
+    "internet research",
+    "virtual assistant",
+    "product description",
+    "short description",
+    "email writing",
+    "localization",
     "übersetzung",
     "übersetzen",
+    "übersetzer",
     "korrekturlesen",
     "korrektur",
-    "dateneingabe",
-    "abschreiben",
     "transkription",
+    "dateneingabe",
     "untertitel",
     "texterfassung",
-    "text bearbeiten",
-    "produktbeschreibung",
     "internetrecherche",
     "virtuelle assistenz",
-
-    # Русский
     "перевод",
     "перевести",
     "переводчик",
+    "проверка текста",
+    "редактирование текста",
     "расшифровка",
     "транскрибация",
     "набор текста",
-    "копирование данных",
     "ввод данных",
-    "проверка текста",
-    "редактирование текста",
-    "описание товара",
+    "копирование данных",
     "субтитры",
+    "описание товара",
     "поиск информации",
     "виртуальный помощник",
-
-    # Украинский
     "переклад",
     "перекласти",
     "перекладач",
+    "перевірка тексту",
+    "редагування тексту",
     "розшифровка",
     "транскрипція",
     "набір тексту",
     "введення даних",
-    "редагування тексту",
-    "опис товару",
+    "копіювання даних",
     "субтитри",
+    "опис товару",
     "пошук інформації",
     "віртуальний помічник",
 ]
 
 COMPLEX_TASK_KEYWORDS = [
-    "senior",
-    "expert",
-    "advanced",
-    "blockchain",
-    "machine learning",
+    "senior developer",
+    "senior engineer",
+    "lead developer",
     "full stack",
     "full-stack",
     "backend developer",
     "frontend developer",
-    "mobile app",
+    "mobile application",
+    "machine learning",
+    "blockchain",
+    "devops",
+    "cybersecurity",
+    "penetration testing",
+    "software architecture",
+    "3d animation",
+    "3d modeling",
     "legal advice",
     "medical diagnosis",
-    "architectural design",
-    "3d modeling",
-    "3d animation",
-    "complex automation",
-    "сложная автоматизация",
-    "юридическая консультация",
-    "медицинская консультация",
-    "senior entwickler",
+    "licensed professional",
+    "5+ years",
+    "five years experience",
 ]
 
-RISK_LABELS = {
-    "low": "низкий",
-    "medium": "средний",
-    "high": "высокий",
+SUPPORTED_TEXT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".csv",
+    ".json",
 }
 
-LANGUAGE_LABELS = {
-    "en": "английский",
-    "de": "немецкий",
-    "ru": "русский",
-    "uk": "украинский",
-    "auto": "автоматически",
+SUPPORTED_DOCUMENT_EXTENSIONS = {
+    ".docx",
+    ".pdf",
 }
+
+MAX_FILE_TEXT_LENGTH = 100_000
+
+
+# ---------------------------------------------------------
+# БАЗОВЫЕ ФУНКЦИИ ДЛЯ ФАЙЛОВ JSON
+# ---------------------------------------------------------
+
+def utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+    )
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -148,32 +299,118 @@ def load_json(path: Path, default: Any) -> Any:
         return default
 
 
+def save_json(path: Path, data: Any) -> bool:
+    try:
+        temporary_path = path.with_suffix(path.suffix + ".tmp")
+
+        temporary_path.write_text(
+            json.dumps(
+                data,
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        temporary_path.replace(path)
+        return True
+
+    except Exception:
+        return False
+
+
 def get_config() -> dict[str, Any]:
     data = load_json(CONFIG_PATH, {})
-    return data if isinstance(data, dict) else {}
+
+    if isinstance(data, dict):
+        return data
+
+    return {}
 
 
 def get_jobs() -> list[dict[str, Any]]:
     data = load_json(JOBS_PATH, [])
-    return data if isinstance(data, list) else []
+
+    if isinstance(data, list):
+        return [
+            job
+            for job in data
+            if isinstance(job, dict)
+        ]
+
+    return []
 
 
-def text_for_job(job: dict[str, Any]) -> str:
+def get_favorites() -> list[str]:
+    data = load_json(FAVORITES_PATH, [])
+
+    if isinstance(data, list):
+        return [
+            str(item)
+            for item in data
+        ]
+
+    return []
+
+
+def get_history() -> list[dict[str, Any]]:
+    data = load_json(HISTORY_PATH, [])
+
+    if isinstance(data, list):
+        return [
+            item
+            for item in data
+            if isinstance(item, dict)
+        ]
+
+    return []
+
+
+def add_history_entry(
+    action_type: str,
+    title: str,
+    content: str,
+    job_id: str = "",
+) -> bool:
+    history = get_history()
+
+    history.insert(
+        0,
+        {
+            "id": stable_id(
+                action_type,
+                utc_now(),
+                title,
+            ),
+            "type": action_type,
+            "title": title,
+            "content": content,
+            "job_id": job_id,
+            "created_at": utc_now(),
+        },
+    )
+
+    return save_json(
+        HISTORY_PATH,
+        history[:300],
+    )
+
+
+# ---------------------------------------------------------
+# ФУНКЦИИ ДЛЯ ОЦЕНКИ И ФИЛЬТРАЦИИ ЗАДАНИЙ
+# ---------------------------------------------------------
+
+def job_full_text(job: dict[str, Any]) -> str:
     return (
         f"{job.get('title', '')} "
-        f"{job.get('description', '')}"
+        f"{job.get('description', '')} "
+        f"{job.get('category', '')} "
+        f"{job.get('matched_keywords', '')}"
     ).lower()
 
 
 def simple_task_score(job: dict[str, Any]) -> int:
-    """
-    Возвращает оценку простоты задания.
-
-    Чем выше значение, тем больше признаков простой задачи.
-    Сложные технические задания получают штраф.
-    """
-    text = text_for_job(job)
-
+    text = job_full_text(job)
     score = 0
 
     for keyword in SIMPLE_TASK_KEYWORDS:
@@ -182,856 +419,839 @@ def simple_task_score(job: dict[str, Any]) -> int:
 
     for keyword in COMPLEX_TASK_KEYWORDS:
         if keyword in text:
-            score -= 3
+            score -= 4
 
-    description_length = len(str(job.get("description", "")))
+    description_length = len(
+        str(job.get("description", ""))
+    )
 
-    # Очень длинные описания чаще означают более сложный проект.
-    if description_length > 6000:
-        score -= 2
-    elif description_length < 2500:
+    if description_length < 2500:
         score += 1
+
+    if description_length > 6500:
+        score -= 2
+
+    task_type = str(
+        job.get("task_type", "")
+    ).lower()
+
+    if task_type in {
+        "translation",
+        "transcription",
+        "data_entry",
+        "proofreading",
+    }:
+        score += 4
 
     return score
 
 
 def is_simple_task(job: dict[str, Any]) -> bool:
+    stored_value = job.get("is_simple")
+
+    if isinstance(stored_value, bool):
+        return stored_value or simple_task_score(job) >= 1
+
     return simple_task_score(job) >= 1
 
 
-def extract_budget_numbers(job: dict[str, Any]) -> list[float]:
-    """
-    Извлекает числа из budget_text.
+def classify_task_local(job: dict[str, Any]) -> str:
+    stored_type = str(
+        job.get("task_type", "")
+    ).strip()
 
-    Например:
-    "$10 - $30" -> [10, 30]
-    "20 USD" -> [20]
-    """
-    budget_text = str(job.get("budget_text", "")).strip().lower()
+    if stored_type and stored_type != "other":
+        return stored_type
 
-    if not budget_text or budget_text in {
+    text = job_full_text(job)
+
+    categories = {
+        "translation": [
+            "translation",
+            "translate",
+            "translator",
+            "localization",
+            "übersetzung",
+            "übersetzen",
+            "перевод",
+            "перевести",
+            "переклад",
+            "перекласти",
+        ],
+        "transcription": [
+            "transcription",
+            "transcribe",
+            "audio to text",
+            "расшифровка",
+            "транскрибация",
+            "transkription",
+            "розшифровка",
+            "транскрипція",
+        ],
+        "data_entry": [
+            "data entry",
+            "copy paste",
+            "typing",
+            "retyping",
+            "dateneingabe",
+            "ввод данных",
+            "набор текста",
+            "введення даних",
+            "набір тексту",
+        ],
+        "proofreading": [
+            "proofreading",
+            "proofread",
+            "text correction",
+            "korrekturlesen",
+            "korrektur",
+            "проверка текста",
+            "редактирование текста",
+            "перевірка тексту",
+            "редагування тексту",
+        ],
+        "virtual_assistant": [
+            "virtual assistant",
+            "virtuelle assistenz",
+            "виртуальный помощник",
+            "віртуальний помічник",
+        ],
+        "writing": [
+            "writing",
+            "copywriting",
+            "product description",
+            "email writing",
+            "описание товара",
+            "опис товару",
+        ],
+    }
+
+    for task_type, keywords in categories.items():
+        if any(
+            keyword in text
+            for keyword in keywords
+        ):
+            return task_type
+
+    return "other"
+
+
+def parse_budget_values(job: dict[str, Any]) -> list[float]:
+    budget_text = str(
+        job.get("budget_text", "")
+    ).strip()
+
+    if not budget_text:
+        return []
+
+    if budget_text.lower() in {
         "not stated",
-        "not_stated",
         "unknown",
         "none",
+        "не указан",
         "—",
     }:
         return []
 
-    clean_text = (
+    normalized = (
         budget_text
         .replace(",", ".")
-        .replace("€", " ")
-        .replace("$", " ")
+        .replace(" ", "")
     )
 
-    matches = re.findall(r"\d+(?:\.\d+)?", clean_text)
+    numbers = re.findall(
+        r"\d+(?:\.\d+)?",
+        normalized,
+    )
 
     values: list[float] = []
 
-    for match in matches:
+    for number in numbers:
         try:
-            value = float(match)
+            value = float(number)
 
-            # Отсекаем числа, похожие на годы и другие нерелевантные данные.
             if 0 < value < 100_000:
                 values.append(value)
+
         except ValueError:
             continue
 
     return values
 
 
-def job_matches_budget(
+def budget_in_range(
     job: dict[str, Any],
     minimum: float,
     maximum: float,
-    include_unspecified: bool,
+    include_without_budget: bool,
 ) -> bool:
-    values = extract_budget_numbers(job)
+    values = parse_budget_values(job)
 
     if not values:
-        return include_unspecified
+        return include_without_budget
 
-    detected_min = min(values)
-    detected_max = max(values)
-
-    # Диапазоны пересекаются.
-    return detected_max >= minimum and detected_min <= maximum
-
-
-def budget_label(job: dict[str, Any]) -> str:
-    value = str(job.get("budget_text", "")).strip()
-
-    if not value or value.lower() in {
-        "not stated",
-        "not_stated",
-        "unknown",
-        "none",
-    }:
-        return "не указан"
-
-    return value
-
-
-def risk_label(job: dict[str, Any]) -> str:
-    risk = str(job.get("risk", "unknown"))
-    return RISK_LABELS.get(risk, "не определён")
-
-
-def language_label(job: dict[str, Any]) -> str:
-    language = str(job.get("language_hint", "—"))
-    return LANGUAGE_LABELS.get(language, language)
-
-
-def job_label(job: dict[str, Any]) -> str:
-    title = str(job.get("title", "Без названия"))[:90]
-    score = int(job.get("score", 0))
-    simple_mark = " · простое" if is_simple_task(job) else ""
+    job_minimum = min(values)
+    job_maximum = max(values)
 
     return (
-        f"{score}/100 · риск: {risk_label(job)}"
-        f"{simple_mark} · {title}"
+        job_maximum >= minimum
+        and job_minimum <= maximum
     )
 
 
+def budget_display(job: dict[str, Any]) -> str:
+    budget = str(
+        job.get("budget_text", "")
+    ).strip()
+
+    if not budget or budget.lower() in {
+        "not stated",
+        "unknown",
+        "none",
+    }:
+        return "Не указан"
+
+    return budget
+
+
+def risk_display(job: dict[str, Any]) -> str:
+    risk = str(
+        job.get("risk", "medium")
+    ).lower()
+
+    return RISK_LABELS.get(
+        risk,
+        "Не определён",
+    )
+
+
+def risk_icon(job: dict[str, Any]) -> str:
+    risk = str(
+        job.get("risk", "medium")
+    ).lower()
+
+    return RISK_ICONS.get(
+        risk,
+        "⚪",
+    )
+
+
+def language_display(job: dict[str, Any]) -> str:
+    language = str(
+        job.get("language_hint", "")
+    ).lower()
+
+    return LANGUAGE_LABELS.get(
+        language,
+        language or "Не определён",
+    )
+
+
+def task_display(job: dict[str, Any]) -> str:
+    task_type = classify_task_local(job)
+
+    return TASK_LABELS.get(
+        task_type,
+        "Другое",
+    )
+
+
+def calculate_opportunity_score(
+    job: dict[str, Any],
+) -> int:
+    base_score = int(
+        job.get("score", 0)
+    )
+
+    result = base_score
+
+    if is_simple_task(job):
+        result += 8
+
+    if str(job.get("risk")) == "low":
+        result += 7
+
+    if str(job.get("risk")) == "high":
+        result -= 25
+
+    budget_values = parse_budget_values(job)
+
+    if budget_values:
+        budget_min = min(budget_values)
+        budget_max = max(budget_values)
+
+        if budget_max >= 5 and budget_min <= 50:
+            result += 8
+
+    if classify_task_local(job) in {
+        "translation",
+        "proofreading",
+        "transcription",
+        "data_entry",
+    }:
+        result += 7
+
+    return max(
+        0,
+        min(100, result),
+    )
+
+
+def estimated_difficulty(job: dict[str, Any]) -> str:
+    score = simple_task_score(job)
+    description_length = len(
+        str(job.get("description", ""))
+    )
+
+    if score >= 6 and description_length < 3000:
+        return "Лёгкая"
+
+    if score >= 1:
+        return "Средняя"
+
+    return "Сложная"
+
+
+def estimated_time(job: dict[str, Any]) -> str:
+    task_type = classify_task_local(job)
+    description_length = len(
+        str(job.get("description", ""))
+    )
+
+    base_minutes = {
+        "translation": 45,
+        "proofreading": 35,
+        "transcription": 60,
+        "data_entry": 40,
+        "virtual_assistant": 75,
+        "writing": 60,
+        "other": 90,
+    }.get(task_type, 90)
+
+    if description_length > 4000:
+        base_minutes += 45
+
+    if description_length > 8000:
+        base_minutes += 60
+
+    if base_minutes < 60:
+        return f"Около {base_minutes} мин."
+
+    hours = round(base_minutes / 60, 1)
+    return f"Около {hours} ч."
+
+
+def recommended_price(job: dict[str, Any]) -> str:
+    budget_values = parse_budget_values(job)
+
+    if budget_values:
+        minimum = min(budget_values)
+        maximum = max(budget_values)
+
+        if len(budget_values) >= 2:
+            suggested = round(
+                minimum + (maximum - minimum) * 0.45,
+                2,
+            )
+        else:
+            suggested = maximum
+
+        return f"{suggested:g}"
+
+    task_type = classify_task_local(job)
+
+    suggested_prices = {
+        "translation": 15,
+        "proofreading": 12,
+        "transcription": 18,
+        "data_entry": 12,
+        "virtual_assistant": 20,
+        "writing": 18,
+        "other": 20,
+    }
+
+    return str(
+        suggested_prices.get(task_type, 20)
+    )
+
+
+def job_option_label(job: dict[str, Any]) -> str:
+    score = calculate_opportunity_score(job)
+    title = str(
+        job.get("title", "Без названия")
+    )[:85]
+
+    return (
+        f"{score}/100 · "
+        f"{risk_icon(job)} {risk_display(job)} · "
+        f"{task_display(job)} · "
+        f"{title}"
+    )
+
+
+# ---------------------------------------------------------
+# ИЗБРАННОЕ
+# ---------------------------------------------------------
+
+def is_favorite(job_id: str) -> bool:
+    return job_id in set(get_favorites())
+
+
+def toggle_favorite(job_id: str) -> bool:
+    favorites = get_favorites()
+
+    if job_id in favorites:
+        favorites.remove(job_id)
+    else:
+        favorites.insert(0, job_id)
+
+    return save_json(
+        FAVORITES_PATH,
+        favorites,
+    )
+
+
+# ---------------------------------------------------------
+# ЧТЕНИЕ ЗАГРУЖЕННЫХ ФАЙЛОВ
+# ---------------------------------------------------------
+
+def read_plain_text_file(
+    file_name: str,
+    file_bytes: bytes,
+) -> str:
+    extension = Path(file_name).suffix.lower()
+
+    if extension == ".csv":
+        decoded = file_bytes.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+        reader = csv.reader(
+            io.StringIO(decoded)
+        )
+
+        rows = [
+            " | ".join(row)
+            for row in reader
+        ]
+
+        return "\n".join(rows)
+
+    if extension == ".json":
+        decoded = file_bytes.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+        try:
+            parsed = json.loads(decoded)
+
+            return json.dumps(
+                parsed,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        except json.JSONDecodeError:
+            return decoded
+
+    return file_bytes.decode(
+        "utf-8",
+        errors="replace",
+    )
+
+
+def read_docx_file(file_bytes: bytes) -> str:
+    try:
+        from docx import Document
+    except Exception as exc:
+        raise RuntimeError(
+            "Для DOCX нужно добавить python-docx "
+            "в requirements.txt."
+        ) from exc
+
+    document = Document(
+        io.BytesIO(file_bytes)
+    )
+
+    paragraphs = [
+        paragraph.text
+        for paragraph in document.paragraphs
+        if paragraph.text.strip()
+    ]
+
+    for table in document.tables:
+        for row in table.rows:
+            row_text = " | ".join(
+                cell.text.strip()
+                for cell in row.cells
+            )
+
+            if row_text.strip():
+                paragraphs.append(row_text)
+
+    return "\n".join(paragraphs)
+
+
+def read_pdf_file(file_bytes: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except Exception as exc:
+        raise RuntimeError(
+            "Для PDF нужно добавить pypdf "
+            "в requirements.txt."
+        ) from exc
+
+    reader = PdfReader(
+        io.BytesIO(file_bytes)
+    )
+
+    pages: list[str] = []
+
+    for page_number, page in enumerate(
+        reader.pages,
+        start=1,
+    ):
+        page_text = page.extract_text() or ""
+
+        if page_text.strip():
+            pages.append(
+                f"\n--- Страница {page_number} ---\n"
+                f"{page_text.strip()}"
+            )
+
+    if not pages:
+        raise RuntimeError(
+            "В PDF не удалось найти обычный текст. "
+            "Возможно, это скан или изображение."
+        )
+
+    return "\n".join(pages)
+
+
+def extract_uploaded_files(
+    uploaded_files: list[Any] | None,
+) -> tuple[str, list[str]]:
+    if not uploaded_files:
+        return "", []
+
+    extracted_parts: list[str] = []
+    messages: list[str] = []
+
+    for uploaded_file in uploaded_files:
+        file_name = str(
+            uploaded_file.name
+        )
+
+        extension = Path(
+            file_name
+        ).suffix.lower()
+
+        file_bytes = uploaded_file.getvalue()
+
+        try:
+            if extension in SUPPORTED_TEXT_EXTENSIONS:
+                content = read_plain_text_file(
+                    file_name,
+                    file_bytes,
+                )
+
+            elif extension == ".docx":
+                content = read_docx_file(
+                    file_bytes
+                )
+
+            elif extension == ".pdf":
+                content = read_pdf_file(
+                    file_bytes
+                )
+
+            else:
+                messages.append(
+                    f"Файл «{file_name}» пропущен: "
+                    "формат пока не поддерживается."
+                )
+                continue
+
+            content = content.strip()
+
+            if not content:
+                messages.append(
+                    f"В файле «{file_name}» "
+                    "не найден текст."
+                )
+                continue
+
+            extracted_parts.append(
+                f"\n\n===== ФАЙЛ: {file_name} =====\n\n"
+                f"{content[:MAX_FILE_TEXT_LENGTH]}"
+            )
+
+            messages.append(
+                f"✅ Файл «{file_name}» прочитан."
+            )
+
+        except Exception as exc:
+            messages.append(
+                f"❌ Не удалось прочитать "
+                f"«{file_name}»: {exc}"
+            )
+
+    return (
+        "\n".join(extracted_parts).strip(),
+        messages,
+    )
+
+
+# ---------------------------------------------------------
+# ВЫБОР И ОТОБРАЖЕНИЕ ЗАКАЗА
+# ---------------------------------------------------------
+
 def select_job(
-    all_jobs: list[dict[str, Any]],
+    jobs: list[dict[str, Any]],
     key: str,
+    label: str = "Выбери заказ",
 ) -> dict[str, Any] | None:
-    if not all_jobs:
+    if not jobs:
         st.info(
-            "Пока нет заказов. Добавь объявление вручную "
-            "или дождись следующего сканирования."
+            "Пока нет подходящих заказов."
         )
         return None
 
     selected_index = st.selectbox(
-        "Выбери заказ",
-        options=list(range(len(all_jobs))),
-        format_func=lambda index: job_label(all_jobs[index]),
+        label,
+        options=list(range(len(jobs))),
+        format_func=lambda index: job_option_label(
+            jobs[index]
+        ),
         key=key,
     )
 
-    return all_jobs[selected_index]
+    return jobs[selected_index]
 
 
-def render_job(job: dict[str, Any]) -> None:
-    if is_simple_task(job):
-        st.success("Подходит под категорию простых заданий")
-
-    st.write(str(job.get("description", ""))[:5000])
-
-    st.caption(
-        f"Источник: {job.get('source', '—')} · "
-        f"Бюджет: {budget_label(job)} · "
-        f"Язык: {language_label(job)} · "
-        f"Риск: {risk_label(job)} · "
-        f"Опубликовано: {job.get('published', '—')}"
+def render_job_card(
+    job: dict[str, Any],
+    *,
+    expanded_description: bool = True,
+    card_key: str = "",
+) -> None:
+    job_id = str(
+        job.get("id", "")
     )
 
-    matched_keywords = job.get("matched_keywords", [])
+    risk = str(
+        job.get("risk", "medium")
+    )
 
-    if matched_keywords:
-        st.caption(
-            "Совпавшие ключевые слова: "
-            + ", ".join(str(item) for item in matched_keywords)
-        )
+    risk_class = {
+        "low": "risk-low",
+        "medium": "risk-medium",
+        "high": "risk-high",
+    }.get(risk, "risk-medium")
 
-    risk_keywords = job.get("risk_keywords", [])
+    title = str(
+        job.get("title", "Без названия")
+    )
 
-    if risk_keywords:
-        st.warning(
-            "Подозрительные слова или фразы: "
-            + ", ".join(str(item) for item in risk_keywords)
-        )
+    company = str(
+        job.get("company", "")
+    ).strip()
 
-    link = str(job.get("link", "")).strip()
+    source = str(
+        job.get("source", "Неизвестный источник")
+    )
 
-    if link:
-        st.link_button("Открыть оригинальное объявление", link)
+    opportunity_score = calculate_opportunity_score(
+        job
+    )
 
+    simple_badge = (
+        '<span class="badge simple-task">'
+        '✨ Простое задание'
+        '</span>'
+        if is_simple_task(job)
+        else ""
+    )
 
-def render_analysis(analysis: dict[str, Any]) -> None:
-    """
-    Показывает результат анализа с русскими названиями полей.
-    """
-    c1, c2, c3 = st.columns(3)
+    st.markdown(
+        f"""
+        <div class="job-card">
+            <div class="job-title">{title}</div>
+            <div class="job-meta">
+                {company + " · " if company else ""}
+                {source}
+            </div>
+
+            <span class="badge">
+                ⭐ Выгодность: {opportunity_score}/100
+            </span>
+
+            <span class="badge {risk_class}">
+                {risk_icon(job)} Риск: {risk_display(job)}
+            </span>
+
+            <span class="badge">
+                💰 Бюджет: {budget_display(job)}
+            </span>
+
+            <span class="badge">
+                🧩 {task_display(job)}
+            </span>
+
+            {simple_badge}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
-        "Соответствие",
-        f"{analysis.get('fit_score', '—')}/100",
+        "Сложность",
+        estimated_difficulty(job),
     )
 
     c2.metric(
         "Примерное время",
-        f"{analysis.get('estimated_minutes', '—')} мин.",
-    )
-
-    suggested_price = analysis.get("suggested_price_eur", "—")
-
-    c3.metric(
-        "Предлагаемая цена",
-        f"{suggested_price} €",
-    )
-
-    recommended = analysis.get("recommended")
-
-    if recommended is True:
-        st.success("ИИ рекомендует рассмотреть этот заказ.")
-    elif recommended is False:
-        st.warning("ИИ не считает этот заказ оптимальным.")
-
-    st.write(
-        "**Тип задачи:**",
-        analysis.get("task_type", "не определён"),
-    )
-
-    st.write(
-        "**Язык объявления:**",
-        analysis.get("detected_language", "не определён"),
-    )
-
-    st.write(
-        "**Оценка срока:**",
-        analysis.get("deadline_assessment", "не указана"),
-    )
-
-    st.write(
-        "**Причина оценки:**",
-        analysis.get("reason", "не указана"),
-    )
-
-    missing_information = analysis.get("missing_information", [])
-
-    if missing_information:
-        st.info(
-            "**Что нужно уточнить:**\n\n"
-            + "\n".join(
-                f"- {item}" for item in missing_information
-            )
-        )
-
-    risks = analysis.get("risks", [])
-
-    if risks:
-        st.warning(
-            "**Возможные риски:**\n\n"
-            + "\n".join(f"- {item}" for item in risks)
-        )
-
-
-cfg = get_config()
-profile = cfg.get("profile", {})
-repo_jobs = get_jobs()
-
-manual_jobs = st.session_state.setdefault("manual_jobs", [])
-all_jobs = manual_jobs + repo_jobs
-
-scan_status = load_json(STATUS_PATH, {})
-
-
-st.title("🧭 Агент вакансий")
-
-st.caption(
-    "Ищет объявления, оценивает их, готовит отклики, "
-    "ответы клиентам и черновики работы. "
-    "Финальную отправку на площадке подтверждаешь ты."
-)
-
-
-with st.sidebar:
-    st.subheader("Состояние")
-
-    st.metric("Найдено заказов", len(repo_jobs))
-
-    st.metric(
-        "Рейтинг 70 и выше",
-        sum(
-            int(job.get("score", 0)) >= 70
-            for job in repo_jobs
-        ),
-    )
-
-    st.metric(
-        "Простых заданий",
-        sum(is_simple_task(job) for job in repo_jobs),
-    )
-
-    st.write(
-        "ИИ:",
-        "✅ подключён"
-        if ai.available()
-        else "⚠️ ключ не подключён — доступен только шаблон",
-    )
-
-    if scan_status:
-        st.caption(
-            "Последняя проверка: "
-            f"{scan_status.get('finished_at', '—')}"
-        )
-
-        if scan_status.get("errors"):
-            st.warning(
-                "Некоторые источники вернули ошибку. "
-                "Открой вкладку «Диагностика»."
-            )
-
-    if st.button("Обновить страницу"):
-        st.rerun()
-
-
-overview, jobs_tab, proposal_tab, chat_tab, work_tab, diagnostics = st.tabs(
-    [
-        "Обзор",
-        "Заказы",
-        "Отклик",
-        "Переписка",
-        "Выполнение",
-        "Диагностика",
-    ]
-)
-
-
-with overview:
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric("Всего", len(repo_jobs))
-
-    c2.metric(
-        "Низкий риск",
-        sum(
-            job.get("risk") == "low"
-            for job in repo_jobs
-        ),
+        estimated_time(job),
     )
 
     c3.metric(
-        "Простых",
-        sum(is_simple_task(job) for job in repo_jobs),
+        "Рекомендованная цена",
+        recommended_price(job),
     )
 
     c4.metric(
-        "Рейтинг 80 и выше",
-        sum(
-            int(job.get("score", 0)) >= 80
-            for job in repo_jobs
-        ),
+        "Язык",
+        language_display(job),
     )
 
-    st.subheader("Лучшие простые предложения")
+    if expanded_description:
+        description = str(
+            job.get("description", "")
+        ).strip()
 
-    best_jobs = sorted(
-        repo_jobs,
-        key=lambda row: (
-            simple_task_score(row),
-            int(row.get("score", 0)),
-        ),
-        reverse=True,
-    )
-
-    for job in best_jobs[:10]:
-        with st.expander(job_label(job)):
-            render_job(job)
-
-
-with jobs_tab:
-    st.subheader("Добавить объявление вручную")
-
-    with st.form("manual_job"):
-        title = st.text_input("Название задания")
-
-        link = st.text_input(
-            "Ссылка",
-            placeholder="Необязательно",
-        )
-
-        description = st.text_area(
-            "Полное описание",
-            height=230,
-        )
-
-        add_manual = st.form_submit_button(
-            "Добавить объявление"
-        )
-
-    if add_manual:
-        if not title.strip() or not description.strip():
-            st.error("Заполни название и описание.")
-        else:
-            score, matched, risks, risk = score_job(
-                title,
-                description,
-                cfg,
-            )
-
-            now = (
-                datetime.now(timezone.utc)
-                .replace(microsecond=0)
-                .isoformat()
-            )
-
-            manual_jobs.insert(
-                0,
-                {
-                    "id": stable_id(
-                        "manual",
-                        link,
-                        title,
-                    ),
-                    "source": "добавлено вручную",
-                    "title": title.strip(),
-                    "link": link.strip(),
-                    "description": description.strip(),
-                    "published": now,
-                    "scanned_at": now,
-                    "language_hint": detect_language(
-                        f"{title} {description}"
-                    ),
-                    "budget_text": extract_budget(
-                        f"{title} {description}"
-                    ),
-                    "score": score,
-                    "risk": risk,
-                    "matched_keywords": matched,
-                    "risk_keywords": risks,
-                    "status": "new",
-                },
-            )
-
-            st.success(
-                "Объявление добавлено в текущую сессию."
-            )
-
-    st.divider()
-    st.subheader("Фильтры")
-
-    min_score = st.slider(
-        "Минимальный рейтинг",
-        min_value=0,
-        max_value=100,
-        value=25,
-        step=5,
-    )
-
-    budget_range = st.slider(
-        "Бюджет задания, $",
-        min_value=0,
-        max_value=200,
-        value=(5, 50),
-        step=5,
-        help=(
-            "По умолчанию показываются задания "
-            "с бюджетом от $5 до $50."
-        ),
-    )
-
-    include_unspecified_budget = st.checkbox(
-        "Показывать задания без указанного бюджета",
-        value=True,
-    )
-
-    only_simple = st.checkbox(
-        "Показывать только простые задания",
-        value=True,
-        help=(
-            "Переводы, набор текста, транскрибация, "
-            "копирование данных, лёгкие описания и поиск информации."
-        ),
-    )
-
-    risk_options = {
-        "Низкий": "low",
-        "Средний": "medium",
-        "Высокий": "high",
-    }
-
-    selected_risk_labels = st.multiselect(
-        "Допустимый риск",
-        options=list(risk_options.keys()),
-        default=["Низкий", "Средний"],
-    )
-
-    selected_risks = {
-        risk_options[label]
-        for label in selected_risk_labels
-    }
-
-    search_text = st.text_input(
-        "Поиск по словам",
-        placeholder=(
-            "Например: перевод, transcription, data entry"
-        ),
-    ).strip().lower()
-
-    filtered_jobs: list[dict[str, Any]] = []
-
-    for job in all_jobs:
-        if int(job.get("score", 0)) < min_score:
-            continue
-
-        if job.get("risk") not in selected_risks:
-            continue
-
-        if only_simple and not is_simple_task(job):
-            continue
-
-        if not job_matches_budget(
-            job,
-            float(budget_range[0]),
-            float(budget_range[1]),
-            include_unspecified_budget,
-        ):
-            continue
-
-        if search_text and search_text not in text_for_job(job):
-            continue
-
-        filtered_jobs.append(job)
-
-    filtered_jobs.sort(
-        key=lambda row: (
-            simple_task_score(row),
-            int(row.get("score", 0)),
-        ),
-        reverse=True,
-    )
-
-    st.write(f"Показано заказов: **{len(filtered_jobs)}**")
-
-    if not filtered_jobs:
-        st.info(
-            "По выбранным фильтрам ничего не найдено. "
-            "Попробуй включить задания без бюджета, "
-            "снизить минимальный рейтинг или отключить "
-            "фильтр простых заданий."
-        )
-
-    for job in filtered_jobs[:100]:
-        with st.expander(job_label(job)):
-            render_job(job)
-
-
-with proposal_tab:
-    job = select_job(all_jobs, "proposal_job")
-
-    if job:
-        render_job(job)
-
-        preferences = st.text_input(
-            "Дополнительные пожелания к отклику",
-            placeholder=(
-                "Например: коротко, могу закончить сегодня"
-            ),
-        )
-
-        if ai.available():
-            if st.button(
-                "1. Проанализировать заказ",
-                type="primary",
+        if description:
+            with st.expander(
+                "Показать описание заказа",
+                expanded=False,
             ):
-                try:
-                    with st.spinner(
-                        "ИИ анализирует объявление..."
-                    ):
-                        st.session_state[
-                            f"analysis_{job['id']}"
-                        ] = ai.analyze_job(job, profile)
-
-                except Exception as exc:
-                    st.error(f"Ошибка ИИ: {exc}")
-
-            analysis_key = f"analysis_{job['id']}"
-
-            if analysis_key in st.session_state:
-                st.subheader("Результат анализа")
-
-                render_analysis(
-                    st.session_state[analysis_key]
+                st.write(
+                    description[:10_000]
                 )
 
-                if st.button("2. Создать отклик"):
-                    try:
-                        with st.spinner(
-                            "ИИ готовит персональный отклик..."
-                        ):
-                            st.session_state[
-                                f"proposal_{job['id']}"
-                            ] = ai.create_proposal(
-                                job,
-                                profile,
-                                st.session_state[analysis_key],
-                                preferences,
-                            )
-
-                    except Exception as exc:
-                        st.error(f"Ошибка ИИ: {exc}")
-
-        else:
-            st.info(
-                "OpenAI не подключён. "
-                "Можно использовать базовый шаблон."
-            )
-
-            if st.button("Создать базовый шаблон"):
-                st.session_state[
-                    f"proposal_{job['id']}"
-                ] = ai.fallback_proposal(
-                    job,
-                    profile,
-                )
-
-        proposal_key = f"proposal_{job['id']}"
-
-        if proposal_key in st.session_state:
-            proposal = st.text_area(
-                "Черновик отклика",
-                st.session_state[proposal_key],
-                height=280,
-            )
-
-            st.download_button(
-                "Скачать отклик в формате TXT",
-                proposal,
-                file_name="otklik.txt",
-            )
-
-            if job.get("link"):
-                st.link_button(
-                    "Открыть сайт с объявлением",
-                    job["link"],
-                )
-
-
-with chat_tab:
-    st.info(
-        "Вставь историю переписки и последнее сообщение клиента. "
-        "Обязательно проверь ответ перед отправкой."
+    matched_keywords = job.get(
+        "matched_keywords",
+        [],
     )
 
-    facts = st.text_area(
-        "Уже согласованные условия",
-        placeholder=(
-            "Цена $30, срок сегодня до 18:00, формат DOCX"
-        ),
-    )
-
-    history = st.text_area(
-        "История переписки",
-        height=230,
-    )
-
-    incoming = st.text_area(
-        "Новое сообщение клиента",
-        height=130,
-    )
-
-    language = st.selectbox(
-        "Язык ответа",
-        [
-            "auto",
-            "Русский",
-            "Українська",
-            "Deutsch",
-            "English",
-        ],
-        format_func=lambda value: (
-            "Определить автоматически"
-            if value == "auto"
-            else value
-        ),
-    )
-
-    if st.button("Подготовить ответ"):
-        if not ai.available():
-            st.error(
-                "Для создания ответа подключи OpenAI API."
+    if isinstance(matched_keywords, list) and matched_keywords:
+        st.caption(
+            "Подходящие слова: "
+            + ", ".join(
+                str(item)
+                for item in matched_keywords[:15]
             )
-
-        elif not incoming.strip():
-            st.error(
-                "Сначала вставь сообщение клиента."
-            )
-
-        else:
-            try:
-                with st.spinner(
-                    "ИИ готовит ответ клиенту..."
-                ):
-                    st.session_state[
-                        "client_reply"
-                    ] = ai.create_reply(
-                        history,
-                        incoming,
-                        facts,
-                        language,
-                    )
-
-            except Exception as exc:
-                st.error(f"Ошибка ИИ: {exc}")
-
-    if "client_reply" in st.session_state:
-        st.text_area(
-            "Готовый ответ",
-            st.session_state["client_reply"],
-            height=220,
         )
 
-
-with work_tab:
-    job = select_job(all_jobs, "work_job")
-
-    default_task = (
-        str(job.get("title", ""))
-        if job
-        else ""
+    risk_keywords = job.get(
+        "risk_keywords",
+        [],
     )
 
-    task = st.text_area(
-        "Что нужно выполнить",
-        value=default_task,
-        height=100,
+    if isinstance(risk_keywords, list) and risk_keywords:
+        st.warning(
+            "Подозрительные слова: "
+            + ", ".join(
+                str(item)
+                for item in risk_keywords[:15]
+            )
+        )
+
+    actions = st.columns([1, 1, 1, 2])
+
+    favorite_text = (
+        "💔 Убрать из избранного"
+        if is_favorite(job_id)
+        else "❤️ В избранное"
     )
 
-    materials = st.text_area(
-        "Материалы от клиента",
-        height=320,
-        placeholder=(
-            "Вставь текст, данные, ссылки или другую "
-            "информацию от клиента."
-        ),
+    unique_key = (
+        card_key
+        or job_id
+        or stable_id(
+            source,
+            str(job.get("link", "")),
+            title,
+        )
     )
 
-    requirements = st.text_area(
-        "Точные требования клиента",
-        height=140,
-    )
-
-    output_language = st.selectbox(
-        "Язык готового результата",
-        [
-            "auto",
-            "Русский",
-            "Українська",
-            "Deutsch",
-            "English",
-        ],
-        format_func=lambda value: (
-            "Определить автоматически"
-            if value == "auto"
-            else value
-        ),
-    )
-
-    if st.button(
-        "Создать полный черновик",
-        type="primary",
+    if actions[0].button(
+        favorite_text,
+        key=f"favorite_{unique_key}",
+        use_container_width=True,
     ):
-        if not ai.available():
-            st.error(
-                "Для выполнения заказа подключи OpenAI API."
-            )
-
-        elif not task.strip():
-            st.error(
-                "Сначала заполни поле с задачей."
-            )
-
-        elif not materials.strip():
-            st.error(
-                "Добавь материалы клиента."
-            )
-
+        if toggle_favorite(job_id):
+            st.rerun()
         else:
-            try:
-                with st.spinner(
-                    "ИИ выполняет задание..."
-                ):
-                    st.session_state[
-                        "work_draft"
-                    ] = ai.fulfill_order(
-                        task,
-                        materials,
-                        requirements,
-                        output_language,
-                    )
+            st.error(
+                "Не удалось сохранить избранное."
+            )
 
-            except Exception as exc:
-                st.error(f"Ошибка ИИ: {exc}")
+    link = str(
+        job.get("link", "")
+    ).strip()
 
-    if "work_draft" in st.session_state:
-        draft = st.text_area(
-            "Черновик готовой работы",
-            st.session_state["work_draft"],
-            height=520,
+    if link:
+        actions[1].link_button(
+            "🔗 Открыть оригинал",
+            link,
+            use_container_width=True,
         )
 
-        c1, c2 = st.columns(2)
+    if actions[2].button(
+        "✉️ Выбрать для отклика",
+        key=f"choose_proposal_{unique_key}",
+        use_container_width=True,
+    ):
+        st.session_state[
+            "selected_proposal_job_id"
+        ] = job_id
 
-        c1.download_button(
-            "Скачать результат в формате TXT",
-            draft,
-            file_name="gotovaya_rabota.txt",
-        )
-
-        if c2.button("Проверить качество"):
-            try:
-                with st.spinner(
-                    "ИИ проверяет качество результата..."
-                ):
-                    st.session_state[
-                        "qa_report"
-                    ] = ai.quality_check(
-                        task,
-                        requirements,
-                        draft,
-                    )
-
-            except Exception as exc:
-                st.error(f"Ошибка ИИ: {exc}")
-
-    if "qa_report" in st.session_state:
-        st.text_area(
-            "Отчёт о проверке",
-            st.session_state["qa_report"],
-            height=260,
+        st.success(
+            "Заказ выбран. Открой вкладку «Отклик»."
         )
 
 
-with diagnostics:
-    st.subheader("Проверка системы")
+# ---------------------------------------------------------
+# ЗАГРУЗКА ДАННЫХ ПРИЛОЖЕНИЯ
+# ---------------------------------------------------------
 
-    diagnostic_data = {
-        "Конфигурация загружена": bool(cfg),
-        "Список заказов загружен": isinstance(
-            repo_jobs,
-            list,
-        ),
-        "Библиотека OpenAI установлена": (
-            ai.OpenAI is not None
-        ),
-        "Ключ OpenAI найден": bool(
-            ai.get_secret("OPENAI_API_KEY")
-        ),
-        "Модель OpenAI": ai.get_secret(
-            "OPENAI_MODEL",
-            ai.DEFAULT_MODEL,
-        ),
-        "Включено источников": sum(
-            bool(source.get("enabled"))
-            for source in cfg.get("sources", [])
-        ),
-        "Последнее сканирование": scan_status,
-    }
+cfg = get_config()
+profile = cfg.get("profile", {})
 
-    st.json(diagnostic_data)
+if not isinstance(profile, dict):
+    profile = {}
 
-    st.warning(
-        "Система специально не отправляет заявки сама, "
-        "не обходит CAPTCHA и не скрывает автоматизацию. "
-        "Это снижает риск блокировки аккаунта."
-    )
-    # ---------------------------------------------------------
+repo_jobs = get_jobs()
+
+manual_jobs = st.session_state.setdefault(
+    "manual_jobs",
+    [],
+)
+
+all_jobs = manual_jobs + repo_jobs
+
+scan_status = load_json(
+    STATUS_PATH,
+    {},
+)
+
+favorites = get_favorites()
+history = get_history()
+# ---------------------------------------------------------
 # ВЕРХНЯЯ ЧАСТЬ ИНТЕРФЕЙСА
 # ---------------------------------------------------------
 
