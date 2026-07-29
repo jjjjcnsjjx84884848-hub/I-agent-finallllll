@@ -1,0 +1,49 @@
+{
+  "profile": {
+    "display_name": "Olha",
+    "languages": ["Ukrainian", "Russian", "German", "English"],
+    "services": [
+      "translation and proofreading",
+      "German letters and messages",
+      "CV and application documents",
+      "product descriptions and social posts",
+      "online research and summaries",
+      "document and spreadsheet formatting"
+    ],
+    "minimum_price_eur": 10,
+    "preferred_price_eur": 20,
+    "timezone": "Europe/Berlin"
+  },
+  "scanner": {
+    "max_items_per_source": 50,
+    "keep_latest_jobs": 500,
+    "minimum_score": 20,
+    "keywords": [
+      "translate", "translation", "translator", "proofread", "proofreading",
+      "german", "ukrainian", "russian", "english", "letter", "email",
+      "resume", "cv", "cover letter", "application", "research", "summary",
+      "document", "spreadsheet", "excel", "word", "pdf", "data entry",
+      "product description", "social media", "virtual assistant", "writing",
+      "übersetzung", "bewerbung", "korrektur", "recherche"
+    ],
+    "negative_keywords": [
+      "adult content", "casino", "betting", "crypto deposit", "gift card",
+      "pay a fee", "registration fee", "account rental", "bank account",
+      "receive money for us", "send passport", "send id", "telegram only"
+    ]
+  },
+  "sources": [
+    {
+      "name": "Remote OK official JSON feed",
+      "type": "remoteok_json",
+      "url": "https://remoteok.com/api",
+      "enabled": true
+    },
+    {
+      "name": "Reddit r/forhire RSS",
+      "type": "rss",
+      "url": "https://www.reddit.com/r/forhire/new/.rss",
+      "enabled": false
+    }
+  ]
+}

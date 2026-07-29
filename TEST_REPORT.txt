@@ -1,0 +1,21 @@
+Verification performed on 2026-07-29
+
+1. Python byte-compilation: PASS
+2. Unit tests: 5 passed
+   - HTML cleanup
+   - budget extraction
+   - language detection
+   - scoring and risk detection
+   - scan + deduplication with a controlled source
+   - fallback proposal templates
+3. JSON validation: PASS
+4. GitHub Actions YAML parse: PASS
+5. Scanner failure isolation: PASS
+   - external network was unavailable in the test container
+   - scanner recorded the source error in scan_status.json and exited normally
+
+Not claimed as locally verified:
+- live Streamlit Community Cloud deployment
+- live Gemini API response
+- live Remote OK/Reddit response
+These depend on external services, account permissions, and current network availability.

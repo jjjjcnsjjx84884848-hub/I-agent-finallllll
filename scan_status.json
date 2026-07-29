@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "enabled_sources": 1,
+  "added": 0,
+  "total": 0,
+  "errors": [
+    "Remote OK official JSON feed: ConnectionError: HTTPSConnectionPool(host='remoteok.com', port=443): Max retries exceeded with url: /api (Caused by NameResolutionError(\"HTTPSConnection(host='remoteok.com', port=443): Failed to resolve 'remoteok.com' ([Errno -3] Temporary failure in name resolution)\"))"
+  ],
+  "finished_at": "2026-07-29T12:49:48+00:00"
+}
