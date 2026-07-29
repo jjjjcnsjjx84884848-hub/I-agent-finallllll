@@ -15,85 +15,148 @@ try:
 except Exception:  # pragma: no cover
     OpenAI = None
 
+
 DEFAULT_MODEL = "gpt-5-mini"
 
 
 def get_secret(name: str, default: str = "") -> str:
+    """Получает секрет сначала из переменных окружения, затем из Streamlit Secrets."""
     env_value = os.getenv(name)
+
     if env_value:
         return env_value
+
     if st is not None:
         try:
             value = st.secrets.get(name, default)
             return str(value) if value is not None else default
         except Exception:
             pass
+
     return default
 
 
 def available() -> bool:
-    return genai is not None and bool(get_secret("GEMINI_API_KEY"))
+    """Проверяет, установлен ли OpenAI и добавлен ли API-ключ."""
+    return OpenAI is not None and bool(get_secret("OPENAI_API_KEY"))
 
 
 def _client() -> Any:
-    if genai is None:
-        raise RuntimeError("Пакет google-genai не установлен")
-    api_key = get_secret("GEMINI_API_KEY")
+    """Создаёт клиент OpenAI."""
+    if OpenAI is None:
+        raise RuntimeError(
+            "Пакет openai не установлен. Добавьте openai в requirements.txt."
+        )
+
+    api_key = get_secret("OPENAI_API_KEY")
+
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY не настроен")
-    return genai.Client(api_key=api_key)
+        raise RuntimeError(
+            "OPENAI_API_KEY не настроен в Streamlit Secrets."
+        )
+
+    return OpenAI(api_key=api_key)
 
 
 def _generate(prompt: str, *, temperature: float = 0.3) -> str:
-    model = get_secret("GEMINI_MODEL", DEFAULT_MODEL)
-    response = _client().models.generate_content(
-        model=model,
-        contents=prompt,
-        config={"temperature": temperature},
-    )
-    text = getattr(response, "text", None)
+    """
+    Отправляет запрос в OpenAI.
+
+    Аргумент temperature сохранён для совместимости с остальным кодом,
+    но в запрос не передаётся, чтобы избежать проблем с моделями,
+    которые могут не поддерживать его.
+    """
+    model = get_secret("OPENAI_MODEL", DEFAULT_MODEL)
+
+    try:
+        response = _client().responses.create(
+            model=model,
+            input=prompt,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Ошибка OpenAI API: {exc}") from exc
+
+    text = getattr(response, "output_text", None)
+
     if not text:
-        raise RuntimeError("ИИ вернул пустой ответ")
+        raise RuntimeError("OpenAI вернул пустой ответ.")
+
     return text.strip()
 
 
 def _extract_json(text: str) -> dict[str, Any]:
+    """Извлекает JSON-объект из ответа модели."""
     cleaned = text.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, flags=re.S)
+
+    fenced = re.search(
+        r"```(?:json)?\s*(\{.*?\})\s*```",
+        cleaned,
+        flags=re.S,
+    )
+
     if fenced:
         cleaned = fenced.group(1)
     else:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+
         if start >= 0 and end > start:
             cleaned = cleaned[start : end + 1]
-    data = json.loads(cleaned)
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"ИИ вернул некорректный JSON: {cleaned[:500]}"
+        ) from exc
+
     if not isinstance(data, dict):
-        raise ValueError("Ожидался JSON-объект")
+        raise ValueError("Ожидался JSON-объект.")
+
     return data
 
 
-def analyze_job(job: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+def analyze_job(
+    job: dict[str, Any],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
     prompt = f"""
-Ты — осторожный помощник фрилансера. Проанализируй объявление без выдумывания опыта.
-Профиль: {json.dumps(profile, ensure_ascii=False)}
-Объявление: {json.dumps(job, ensure_ascii=False)}
+Ты — осторожный помощник фрилансера.
 
-Верни ТОЛЬКО JSON:
+Проанализируй объявление без выдумывания опыта, навыков или квалификаций.
+
+Профиль пользователя:
+{json.dumps(profile, ensure_ascii=False)}
+
+Объявление:
+{json.dumps(job, ensure_ascii=False)}
+
+Верни ТОЛЬКО корректный JSON без дополнительного текста:
+
 {{
-  "fit_score": число 0-100,
-  "recommended": true или false,
+  "fit_score": 0,
+  "recommended": false,
   "detected_language": "язык",
   "task_type": "тип задачи",
-  "estimated_minutes": число,
-  "suggested_price_eur": число,
-  "deadline_assessment": "кратко",
-  "missing_information": ["вопрос"],
-  "risks": ["риск"],
+  "estimated_minutes": 0,
+  "suggested_price_eur": 0,
+  "deadline_assessment": "краткая оценка",
+  "missing_information": ["что нужно уточнить"],
+  "risks": ["возможный риск"],
   "reason": "краткое объяснение"
 }}
-Не предлагай обход правил площадки, проверок личности или возраста.
+
+Требования:
+- fit_score должен быть числом от 0 до 100;
+- recommended должен быть true или false;
+- не предлагай обход правил площадки;
+- не предлагай обход проверки личности или возраста;
+- не выдумывай опыт пользователя;
+- отмечай подозрительные способы оплаты и возможное мошенничество.
 """
-    return _extract_json(_generate(prompt, temperature=0.15))
+
+    result = _generate(prompt, temperature=0.15)
+    return _extract_json(result)
 
 
 def create_proposal(
@@ -104,69 +167,210 @@ def create_proposal(
 ) -> str:
     prompt = f"""
 Напиши короткий персональный отклик на объявление.
-Отвечай на языке объявления. Не утверждай навыки и опыт, которых нет в профиле.
-Не обещай невозможное. Не упоминай ИИ. Не соглашайся на оплату вне правил площадки.
-Профиль: {json.dumps(profile, ensure_ascii=False)}
-Объявление: {json.dumps(job, ensure_ascii=False)}
-Анализ: {json.dumps(analysis, ensure_ascii=False)}
-Пожелания пользователя: {preferences}
 
-Структура: приветствие, понимание задачи, что будет сделано, срок/цена только если обоснованы, 1-2 уточняющих вопроса, завершение.
+Отвечай на языке объявления.
+
+Не утверждай, что у исполнителя есть навыки, опыт или квалификация,
+если этого нет в профиле.
+
+Не обещай невозможное.
+Не упоминай использование ИИ.
+Не соглашайся на оплату в обход правил площадки.
+
+Профиль:
+{json.dumps(profile, ensure_ascii=False)}
+
+Объявление:
+{json.dumps(job, ensure_ascii=False)}
+
+Результат анализа:
+{json.dumps(analysis, ensure_ascii=False)}
+
+Дополнительные пожелания пользователя:
+{preferences}
+
+Структура отклика:
+1. Приветствие.
+2. Краткое понимание задачи.
+3. Что именно исполнитель сможет сделать.
+4. Срок и цена — только если они обоснованы.
+5. Один или два уточняющих вопроса.
+6. Вежливое завершение.
+
 Верни только готовый текст отклика.
 """
+
     return _generate(prompt, temperature=0.35)
 
 
-def create_reply(history: str, incoming: str, facts: str, preferred_language: str = "auto") -> str:
+def create_reply(
+    history: str,
+    incoming: str,
+    facts: str,
+    preferred_language: str = "auto",
+) -> str:
     prompt = f"""
-Подготовь ответ клиенту как исполнитель. Язык: {preferred_language}; если auto — язык последнего сообщения.
-Сохраняй уже согласованные цену, срок и объём. Не выдумывай факты, не меняй условия самовольно.
-Если клиент просит личные документы, предоплату от исполнителя, подарочные карты, доступ к банковскому счёту или обход правил — вежливо откажись.
-Согласованные факты: {facts}
-История: {history}
-Новое сообщение: {incoming}
-Верни только сообщение клиенту.
+Подготовь ответ клиенту от имени исполнителя.
+
+Язык ответа: {preferred_language}.
+Если указано auto, используй язык последнего сообщения клиента.
+
+Сохраняй уже согласованные:
+- цену;
+- срок;
+- объём работы;
+- формат результата.
+
+Не выдумывай факты и не меняй условия самостоятельно.
+
+Если клиент просит:
+- отправить личные документы без необходимости;
+- внести предоплату от имени исполнителя;
+- купить подарочные карты;
+- предоставить доступ к банковскому счёту;
+- перейти на подозрительную оплату;
+- обойти правила площадки;
+
+вежливо откажись и предложи использовать безопасный способ через площадку.
+
+Согласованные факты:
+{facts}
+
+История переписки:
+{history}
+
+Новое сообщение клиента:
+{incoming}
+
+Верни только готовое сообщение клиенту.
 """
+
     return _generate(prompt, temperature=0.25)
 
 
-def fulfill_order(task: str, materials: str, requirements: str, output_language: str = "auto") -> str:
+def fulfill_order(
+    task: str,
+    materials: str,
+    requirements: str,
+    output_language: str = "auto",
+) -> str:
     prompt = f"""
-Выполни легитимное текстовое/документное задание на основе данных клиента.
-Не выдумывай отсутствующие имена, даты, квалификации, источники или цифры.
-Если критически не хватает данных, создай максимально полезный черновик и в конце добавь раздел "Нужно уточнить".
+Выполни легитимное текстовое или документное задание
+на основе материалов клиента.
+
+Не выдумывай отсутствующие:
+- имена;
+- даты;
+- квалификации;
+- источники;
+- результаты;
+- цифры.
+
+Если критически не хватает информации,
+создай максимально полезный черновик и в конце добавь раздел:
+
+Нужно уточнить
+
 Не выполняй мошеннические, опасные или запрещённые задания.
-Язык результата: {output_language}
-Задача: {task}
-Требования: {requirements}
+
+Язык результата:
+{output_language}
+
+Задача:
+{task}
+
+Требования:
+{requirements}
+
 Материалы клиента:
 {materials}
 
-Верни готовый результат без лишних объяснений о процессе.
+Верни готовый результат без объяснения внутреннего процесса.
 """
+
     return _generate(prompt, temperature=0.25)
 
 
-def quality_check(task: str, requirements: str, draft: str) -> str:
+def quality_check(
+    task: str,
+    requirements: str,
+    draft: str,
+) -> str:
     prompt = f"""
 Проверь черновик перед отправкой клиенту.
-Задача: {task}
-Требования: {requirements}
-Черновик: {draft}
 
-Проверь: соответствие требованиям, язык, логические ошибки, выдуманные данные, пропуски, тон и формат.
-Верни краткий отчёт: "Готово", "Нужно исправить" и конкретные исправления.
+Задача:
+{task}
+
+Требования:
+{requirements}
+
+Черновик:
+{draft}
+
+Проверь:
+- соответствует ли результат задаче;
+- выполнены ли требования;
+- правильный ли язык;
+- нет ли логических ошибок;
+- нет ли выдуманных данных;
+- нет ли пропущенной информации;
+- подходит ли тон;
+- соответствует ли формат.
+
+Верни краткий отчёт в таком виде:
+
+Статус: Готово
+
+или:
+
+Статус: Нужно исправить
+
+После статуса перечисли конкретные исправления.
 """
+
     return _generate(prompt, temperature=0.1)
 
 
-def fallback_proposal(job: dict[str, Any], profile: dict[str, Any]) -> str:
+def fallback_proposal(
+    job: dict[str, Any],
+    profile: dict[str, Any],
+) -> str:
+    """Создаёт простой отклик без ИИ, если API недоступен."""
     language = job.get("language_hint", "en")
     name = profile.get("display_name", "Olha")
+
     templates = {
-        "de": f"Guten Tag,\n\nich kann Sie bei dieser Aufgabe unterstützen. Bitte senden Sie mir den vollständigen Umfang, das gewünschte Format und die Frist. Danach kann ich Preis und Lieferzeit verbindlich bestätigen.\n\nFreundliche Grüße\n{name}",
-        "uk": f"Добрий день!\n\nЯ можу допомогти з цим завданням. Будь ласка, надішліть повний обсяг, потрібний формат і термін. Після цього я зможу точно підтвердити ціну та час виконання.\n\nЗ повагою,\n{name}",
-        "ru": f"Здравствуйте!\n\nЯ могу помочь с этой задачей. Пришлите, пожалуйста, полный объём, нужный формат и срок. После этого я смогу точно подтвердить цену и время выполнения.\n\nС уважением,\n{name}",
-        "en": f"Hello,\n\nI can help with this task. Please send the full scope, required format, and deadline, and I will confirm the price and delivery time.\n\nBest regards,\n{name}",
+        "de": (
+            "Guten Tag,\n\n"
+            "ich kann Sie bei dieser Aufgabe unterstützen. "
+            "Bitte senden Sie mir den vollständigen Umfang, "
+            "das gewünschte Format und die Frist. Danach kann ich "
+            "Preis und Lieferzeit verbindlich bestätigen.\n\n"
+            f"Freundliche Grüße\n{name}"
+        ),
+        "uk": (
+            "Добрий день!\n\n"
+            "Я можу допомогти з цим завданням. Будь ласка, "
+            "надішліть повний обсяг, потрібний формат і термін. "
+            "Після цього я зможу точно підтвердити ціну "
+            "та час виконання.\n\n"
+            f"З повагою,\n{name}"
+        ),
+        "ru": (
+            "Здравствуйте!\n\n"
+            "Я могу помочь с этой задачей. Пришлите, пожалуйста, "
+            "полный объём, нужный формат и срок. После этого я смогу "
+            "точно подтвердить цену и время выполнения.\n\n"
+            f"С уважением,\n{name}"
+        ),
+        "en": (
+            "Hello,\n\n"
+            "I can help with this task. Please send the full scope, "
+            "required format, and deadline, and I will confirm "
+            "the price and delivery time.\n\n"
+            f"Best regards,\n{name}"
+        ),
     }
+
     return templates.get(language, templates["en"])
