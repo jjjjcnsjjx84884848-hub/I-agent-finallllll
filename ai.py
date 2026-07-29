@@ -11,11 +11,11 @@ except Exception:  # pragma: no cover
     st = None
 
 try:
-    from google import genai
+    from openai import OpenAI
 except Exception:  # pragma: no cover
-    genai = None
+    OpenAI = None
 
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_MODEL = "gpt-5-mini"
 
 
 def get_secret(name: str, default: str = "") -> str:
