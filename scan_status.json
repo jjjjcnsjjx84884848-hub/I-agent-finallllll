@@ -1,8 +1,14 @@
 {
-  "ok": true,
-  "enabled_sources": 1,
-  "added": 24,
-  "total": 24,
-  "errors": [],
-  "finished_at": "2026-07-29T13:16:20+00:00"
+  "started_at": "2026-07-29T17:51:54+00:00",
+  "finished_at": "2026-07-29T17:51:58+00:00",
+  "sources": {
+    "Remotive": 35,
+    "Remote OK": 100,
+    "We Work Remotely": 100
+  },
+  "received_total": 235,
+  "unique_total": 233,
+  "passed_filters": 179,
+  "saved_total": 203,
+  "errors": []
 }
