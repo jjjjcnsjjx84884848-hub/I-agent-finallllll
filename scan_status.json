@@ -1,13 +1,13 @@
 {
-  "started_at": "2026-08-21T05:52:51+00:00",
-  "finished_at": "2026-08-21T05:52:56+00:00",
+  "started_at": "2026-08-21T08:09:14+00:00",
+  "finished_at": "2026-08-21T08:09:19+00:00",
   "sources": {
     "Remotive": 17,
     "Remote OK": 100,
-    "We Work Remotely": 100
+    "We Work Remotely": 99
   },
-  "received_total": 217,
-  "unique_total": 216,
+  "received_total": 216,
+  "unique_total": 215,
   "passed_filters": 167,
   "saved_total": 1000,
   "errors": []
