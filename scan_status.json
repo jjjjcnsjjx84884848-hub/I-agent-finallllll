@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-09-28T15:26:05+00:00",
-  "finished_at": "2026-09-28T15:26:10+00:00",
+  "started_at": "2026-09-28T21:59:11+00:00",
+  "finished_at": "2026-09-28T21:59:15+00:00",
   "sources": {
     "Remotive": 16,
     "Remote OK": 99,
@@ -8,7 +8,7 @@
   },
   "received_total": 197,
   "unique_total": 197,
-  "passed_filters": 130,
+  "passed_filters": 131,
   "saved_total": 1000,
   "errors": []
 }
