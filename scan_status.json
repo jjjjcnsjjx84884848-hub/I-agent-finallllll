@@ -1,19 +1,14 @@
 {
-  "started_at": "2026-11-06T15:00:14+00:00",
-  "finished_at": "2026-11-06T15:00:43+00:00",
+  "started_at": "2026-11-06T20:52:48+00:00",
+  "finished_at": "2026-11-06T20:52:54+00:00",
   "sources": {
     "Remotive": 12,
     "Remote OK": 99,
-    "We Work Remotely": 0
+    "We Work Remotely": 100
   },
-  "received_total": 111,
-  "unique_total": 111,
-  "passed_filters": 74,
+  "received_total": 211,
+  "unique_total": 211,
+  "passed_filters": 136,
   "saved_total": 1000,
-  "errors": [
-    {
-      "source": "We Work Remotely",
-      "error": "The read operation timed out"
-    }
-  ]
+  "errors": []
 }
